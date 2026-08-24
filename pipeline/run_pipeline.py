@@ -336,6 +336,30 @@ def reset_fleet_memories() -> None:
         print(f"\n  Fleet Reset         : ⚠️  FAILED — {exc}")
 
 
+
+def validate_json_output_path(path_str: str) -> Path:
+    """Ensure --json-output parent dir exists and is writable before the run."""
+    path = Path(path_str)
+    parent = path.parent if str(path.parent) not in ("", ".") else Path(".")
+    parent = parent.resolve()
+    if not parent.exists():
+        raise SystemExit(
+            f"--json-output parent directory does not exist: {parent}"
+        )
+    if not parent.is_dir():
+        raise SystemExit(
+            f"--json-output parent path is not a directory: {parent}"
+        )
+    probe = parent / (".caura_write_probe_" + str(os.getpid()))
+    try:
+        probe.write_text("", encoding="utf-8")
+        probe.unlink(missing_ok=True)
+    except OSError as exc:
+        raise SystemExit(
+            f"--json-output directory is not writable: {parent} ({exc})"
+        ) from exc
+    return path
+
 def main():
     parser = argparse.ArgumentParser(description="MemClaw 5-Fleet SaaS Build Pipeline")
     parser.add_argument("--dry-run",      action="store_true", help="Check env + MCP connectivity, then exit")
@@ -347,6 +371,8 @@ def main():
     args = parser.parse_args()
 
     _setup_logging(args.log_level)
+    if args.json_output:
+        validate_json_output_path(args.json_output)
     print_banner()
 
     missing = check_env()
