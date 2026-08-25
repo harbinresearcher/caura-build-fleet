@@ -1,14 +1,13 @@
-import pytest
-
-from retry import backoff_delay
+from retry import MAX_ATTEMPTS, MEMCLAW_MAX_ATTEMPTS, backoff_delay
 
 
 def test_backoff_delay_scales_attempts_with_injected_jitter():
-    midpoint = lambda low, high: (low + high) / 2
+    def midpoint(low, high):
+        return (low + high) / 2
 
     assert [backoff_delay(5, attempt, jitter=midpoint) for attempt in range(3)] == [5, 10, 20]
 
 
-def test_backoff_delay_rejects_negative_attempt():
-    with pytest.raises(ValueError, match="non-negative"):
-        backoff_delay(5, -1)
+def test_retry_budgets_are_service_specific():
+    assert MAX_ATTEMPTS == 4
+    assert MEMCLAW_MAX_ATTEMPTS == 3

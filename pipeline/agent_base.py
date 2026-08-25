@@ -143,8 +143,13 @@ def run_agent(
             except APIStatusError as exc:
                 if exc.status_code == 429 and attempt < MAX_ATTEMPTS - 1:
                     wait = backoff_delay(LLM_RATE_LIMIT_BASE_SECONDS, attempt)
-                    log.warning("[%s] rate limited — waiting %.1fs (attempt %d/4)",
-                                agent_id, wait, attempt + 1)
+                    log.warning(
+                        "[%s] rate limited — waiting %.1fs (attempt %d/%d)",
+                        agent_id,
+                        wait,
+                        attempt + 1,
+                        MAX_ATTEMPTS,
+                    )
                     time.sleep(wait)
                 else:
                     raise
