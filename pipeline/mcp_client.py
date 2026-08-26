@@ -23,8 +23,6 @@ from config import MAX_MEMORY_CONTENT_LEN, MEMCLAW_API_DOMAIN
 
 log = logging.getLogger(__name__)
 
-MEMCLAW_BASE_URL = os.environ.get("MEMCLAW_API_URL", f"https://{MEMCLAW_API_DOMAIN}")
-MCP_URL = os.environ.get("MEMCLAW_MCP_URL", f"{MEMCLAW_BASE_URL.rstrip('/')}/mcp")
 MAX_RECALL_TOP_K = 20
 MCP_PROTOCOL_VERSION = "2025-03-26"
 
@@ -38,6 +36,15 @@ _mcp_transport_at_cache: str | None = None  # transport value when cache was las
 def _cfg(key: str, default: str = "") -> str:
     return os.environ.get(key, default)
 
+def get_base_url() -> str:
+    return _cfg("MEMCLAW_API_URL", f"https://{MEMCLAW_API_DOMAIN}")
+
+
+def get_mcp_url() -> str:
+    return _cfg(
+        "MEMCLAW_MCP_URL",
+        f"{get_base_url().rstrip('/')}/mcp",
+    )
 
 def _headers() -> dict:
     return {
@@ -77,13 +84,13 @@ def _api(path: str) -> str:
 def _transport() -> str:
     return _cfg("MEMCLAW_TRANSPORT", "mcp").strip().lower()
 
-
 def _validate_mcp_url() -> str:
-    url = _cfg("MEMCLAW_MCP_URL", MCP_URL)
+    url = get_mcp_url()
     if not url.startswith("https://"):
-        raise ValueError(f"MEMCLAW_MCP_URL must start with https://, got: {url!r}")
+        raise ValueError(
+            f"MEMCLAW_MCP_URL must start with https://, got: {url!r}"
+        )
     return url
-
 
 def _next_mcp_id() -> int:
     global _mcp_request_id
