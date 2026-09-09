@@ -343,7 +343,12 @@ def main():
     parser.add_argument("--reset",        action="store_true", help="Delete all fleet memories after the run completes")
     parser.add_argument("--loop",         action="store_true", help="Re-run pipeline after each run; resets memories between iterations, pauses for keypress")
     parser.add_argument("--json-output",  metavar="FILE",      help="Write full results to JSON file")
-    parser.add_argument("--log-level",    default="INFO",       help="Logging level (DEBUG/INFO/WARNING/ERROR)")
+    parser.add_argument(
+        "--log-level",
+        default="INFO",
+        choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
+        help="Logging level",
+    )
     args = parser.parse_args()
 
     _setup_logging(args.log_level)
