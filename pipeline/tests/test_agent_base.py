@@ -198,3 +198,39 @@ def test_allowed_tools_filters_correctly(mock_tools, mock_llm):
     tool_names = [t["function"]["name"] for t in call_kwargs.get("tools", [])]
     assert "memclaw_recall" in tool_names
     assert "memclaw_write" not in tool_names
+
+# ── run_agent — warns when max_iterations is exhausted ──────────────────────
+
+@patch("agent_base._llm")
+@patch("mcp_client.call_tool", return_value={"ok": True})
+@patch("mcp_client.list_tools")
+def test_run_agent_warns_when_max_iterations_reached(
+    mock_tools, mock_call_tool, mock_llm, caplog
+):
+    mock_tools.return_value = [{
+        "name": "memclaw_recall",
+        "description": "Recall",
+        "input_schema": {"type": "object", "properties": {}},
+    }]
+
+    tc = MagicMock()
+    tc.id = "call-forever"
+    tc.function.name = "memclaw_recall"
+    tc.function.arguments = json.dumps({"query": "test"})
+
+    # Always return a tool call so the agent reaches the iteration cap.
+    mock_llm.return_value.chat.completions.create.return_value = _make_response(
+        _make_choice(tool_calls=[tc], finish_reason="tool_calls")
+    )
+
+    with caplog.at_level("WARNING"):
+        result = agent_base.run_agent(
+            agent_id="test-agent",
+            system="sys",
+            user_prompt="keep going",
+            max_iterations=3,
+        )
+
+    assert result["iterations"] == 3
+    assert len(result["tool_calls"]) == 3
+    assert "hit max_iterations (3) with tool calls still pending" in caplog.text
