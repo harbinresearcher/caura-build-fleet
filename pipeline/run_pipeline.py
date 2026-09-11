@@ -336,6 +336,10 @@ def reset_fleet_memories() -> None:
         print(f"\n  Fleet Reset         : ⚠️  FAILED — {exc}")
 
 
+def exit_code(results: dict) -> int:
+    """Return a non-zero exit code when any pipeline step failed."""
+    return int(any(result["status"] == "error" for result in results.values()))
+
 
 def validate_json_output_path(path_str: str) -> Path:
     """Ensure --json-output parent dir exists and is writable before the run."""
@@ -409,12 +413,14 @@ def main():
     print_pipeline_table(steps)
 
     run_number = 0
+    pipeline_exit_code = 0
     while True:
         run_number += 1
         if args.loop and run_number > 1:
             print(f"\n  ── Loop iteration {run_number} ──\n")
 
         results = run_pipeline(steps)
+        pipeline_exit_code = max(pipeline_exit_code, exit_code(results))
         print_summary(results)
 
         if args.reset or args.loop:
@@ -434,6 +440,8 @@ def main():
         except KeyboardInterrupt:
             print("\n  Stopped.")
             break
+
+    sys.exit(pipeline_exit_code)
 
 
 if __name__ == "__main__":
