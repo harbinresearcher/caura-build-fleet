@@ -303,3 +303,28 @@ def test_retry_on_500(mock_get, mock_sleep):
     assert result == {"total": 3}
     assert mock_get.call_count == 3
     assert mock_sleep.call_count == 2  # slept before attempt 2 and 3
+
+def test_get_mcp_url_reads_environment_at_call_time(monkeypatch):
+    monkeypatch.setenv("MEMCLAW_API_URL", "https://first.example.com")
+    monkeypatch.delenv("MEMCLAW_MCP_URL", raising=False)
+
+    assert mcp.get_mcp_url() == "https://first.example.com/mcp"
+
+    monkeypatch.setenv("MEMCLAW_API_URL", "https://second.example.com")
+
+    assert mcp.get_mcp_url() == "https://second.example.com/mcp"
+
+
+def test_get_mcp_url_prefers_explicit_mcp_url(monkeypatch):
+    monkeypatch.setenv("MEMCLAW_API_URL", "https://api.example.com")
+    monkeypatch.setenv("MEMCLAW_MCP_URL", "https://custom.example.com/mcp")
+
+    assert mcp.get_mcp_url() == "https://custom.example.com/mcp"
+
+
+def test_get_base_url_reads_environment_at_call_time(monkeypatch):
+    monkeypatch.setenv("MEMCLAW_API_URL", "https://first.example.com")
+    assert mcp.get_base_url() == "https://first.example.com"
+
+    monkeypatch.setenv("MEMCLAW_API_URL", "https://second.example.com")
+    assert mcp.get_base_url() == "https://second.example.com"

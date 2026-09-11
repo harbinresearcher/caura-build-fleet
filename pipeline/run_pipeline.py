@@ -100,7 +100,7 @@ def print_banner():
     print(f"│  Fleet    : {os.environ.get('MEMCLAW_FLEET_ID', '(not set)'):<{W - 15}}│")
     print(f"│  Tenant   : {_mask(tenant_raw):<{W - 15}}│")
     print(f"│  Model    : {os.environ.get('LLM_GATEWAY_MODEL', '(not set)'):<{W - 15}}│")
-    print(f"│  MCP      : {mcp.MCP_URL:<{W - 15}}│")
+    print(f"│  MCP      : {mcp.get_mcp_url():<{W - 15}}│")
     print("└" + "─" * (W - 2) + "┘")
     print()
 
@@ -187,17 +187,17 @@ _HEALTH_SYNONYMS: dict[str, list[str]] = {
 
 
 def _parse_verdict(text: str, keywords: list[str], fallback: str = "?") -> str:
-    """Case-insensitive scan for first matching keyword (and synonyms for health verdicts)."""
+    """Return the verdict whose keyword or synonym appears first in the text."""
     if not text:
         return fallback
     upper = str(text).upper()
+    best: tuple[int, str] | None = None
     for kw in keywords:
-        if kw.upper() in upper:
-            return kw
-        for syn in _HEALTH_SYNONYMS.get(kw, []):
-            if syn.upper() in upper:
-                return kw
-    return fallback
+        for needle in [kw, *_HEALTH_SYNONYMS.get(kw, [])]:
+            position = upper.find(needle.upper())
+            if position != -1 and (best is None or position < best[0]):
+                best = (position, kw)
+    return best[1] if best else fallback
 
 
 def print_summary(results: dict):
@@ -303,7 +303,7 @@ def print_summary(results: dict):
 
     print("  " + "─" * 63)
     print()
-    print(f"  ▸ View memories : {mcp.MEMCLAW_BASE_URL.rstrip('/')}/prism")
+    print(f"  ▸ View memories : {mcp.get_base_url().rstrip('/')}/prism")
     print("═" * 65 + "\n")
 
 
@@ -341,6 +341,29 @@ def exit_code(results: dict) -> int:
     return int(any(result["status"] == "error" for result in results.values()))
 
 
+def validate_json_output_path(path_str: str) -> Path:
+    """Ensure --json-output parent dir exists and is writable before the run."""
+    path = Path(path_str)
+    parent = path.parent if str(path.parent) not in ("", ".") else Path(".")
+    parent = parent.resolve()
+    if not parent.exists():
+        raise SystemExit(
+            f"--json-output parent directory does not exist: {parent}"
+        )
+    if not parent.is_dir():
+        raise SystemExit(
+            f"--json-output parent path is not a directory: {parent}"
+        )
+    probe = parent / (".caura_write_probe_" + str(os.getpid()))
+    try:
+        probe.write_text("", encoding="utf-8")
+        probe.unlink(missing_ok=True)
+    except OSError as exc:
+        raise SystemExit(
+            f"--json-output directory is not writable: {parent} ({exc})"
+        ) from exc
+    return path
+
 def main():
     parser = argparse.ArgumentParser(description="MemClaw 5-Fleet SaaS Build Pipeline")
     parser.add_argument("--dry-run",      action="store_true", help="Check env + MCP connectivity, then exit")
@@ -348,10 +371,17 @@ def main():
     parser.add_argument("--reset",        action="store_true", help="Delete all fleet memories after the run completes")
     parser.add_argument("--loop",         action="store_true", help="Re-run pipeline after each run; resets memories between iterations, pauses for keypress")
     parser.add_argument("--json-output",  metavar="FILE",      help="Write full results to JSON file")
-    parser.add_argument("--log-level",    default="INFO",       help="Logging level (DEBUG/INFO/WARNING/ERROR)")
+    parser.add_argument(
+        "--log-level",
+        default="INFO",
+        choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
+        help="Logging level",
+    )
     args = parser.parse_args()
 
     _setup_logging(args.log_level)
+    if args.json_output:
+        validate_json_output_path(args.json_output)
     print_banner()
 
     missing = check_env()
