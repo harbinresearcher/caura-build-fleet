@@ -100,7 +100,7 @@ def print_banner():
     print(f"│  Fleet    : {os.environ.get('MEMCLAW_FLEET_ID', '(not set)'):<{W - 15}}│")
     print(f"│  Tenant   : {_mask(tenant_raw):<{W - 15}}│")
     print(f"│  Model    : {os.environ.get('LLM_GATEWAY_MODEL', '(not set)'):<{W - 15}}│")
-    print(f"│  MCP      : {mcp.MCP_URL:<{W - 15}}│")
+    print(f"│  MCP      : {mcp.get_mcp_url():<{W - 15}}│")
     print("└" + "─" * (W - 2) + "┘")
     print()
 
@@ -303,7 +303,7 @@ def print_summary(results: dict):
 
     print("  " + "─" * 63)
     print()
-    print(f"  ▸ View memories : {mcp.MEMCLAW_BASE_URL.rstrip('/')}/prism")
+    print(f"  ▸ View memories : {mcp.get_base_url().rstrip('/')}/prism")
     print("═" * 65 + "\n")
 
 
