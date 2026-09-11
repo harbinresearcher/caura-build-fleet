@@ -21,11 +21,12 @@ Pattern: the configured LLM decides which MemClaw MCP tools to call.
 import os
 import json
 import time
-import random
 import logging
 import mcp_client as mcp
 from openai import OpenAI, APIStatusError, APIConnectionError, APITimeoutError
 from typing import Any
+
+from retry import LLM_CONNECTION_BASE_SECONDS, LLM_RATE_LIMIT_BASE_SECONDS, MAX_ATTEMPTS, backoff_delay
 
 log = logging.getLogger(__name__)
 
@@ -135,21 +136,26 @@ def run_agent(
                 kwargs["tool_choice"] = "required"
 
         # Retry on 429 rate limit with exponential backoff
-        for attempt in range(4):
+        for attempt in range(MAX_ATTEMPTS):
             try:
                 response = _llm().chat.completions.create(**kwargs)
                 break
             except APIStatusError as exc:
-                if exc.status_code == 429 and attempt < 3:
-                    wait = 20 * (attempt + 1) * random.uniform(0.8, 1.2)
-                    log.warning("[%s] rate limited — waiting %.1fs (attempt %d/4)",
-                                agent_id, wait, attempt + 1)
+                if exc.status_code == 429 and attempt < MAX_ATTEMPTS - 1:
+                    wait = backoff_delay(LLM_RATE_LIMIT_BASE_SECONDS, attempt)
+                    log.warning(
+                        "[%s] rate limited — waiting %.1fs (attempt %d/%d)",
+                        agent_id,
+                        wait,
+                        attempt + 1,
+                        MAX_ATTEMPTS,
+                    )
                     time.sleep(wait)
                 else:
                     raise
             except (APIConnectionError, APITimeoutError) as exc:
-                if attempt < 3:
-                    wait = 10 * (attempt + 1) * random.uniform(0.8, 1.2)
+                if attempt < MAX_ATTEMPTS - 1:
+                    wait = backoff_delay(LLM_CONNECTION_BASE_SECONDS, attempt)
                     log.warning("[%s] LLM connection error: %s — retrying in %.1fs",
                                 agent_id, exc, wait)
                     time.sleep(wait)

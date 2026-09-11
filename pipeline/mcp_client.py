@@ -19,6 +19,8 @@ import requests
 from requests.exceptions import RequestException, Timeout, HTTPError, ConnectionError as RequestsConnectionError
 from typing import Any
 
+from retry import MEMCLAW_BASE_SECONDS, MEMCLAW_MAX_ATTEMPTS, backoff_delay
+
 from config import MAX_MEMORY_CONTENT_LEN, MEMCLAW_API_DOMAIN
 
 log = logging.getLogger(__name__)
@@ -136,7 +138,7 @@ def _mcp_json_rpc(method: str, params: dict | None = None, *, expect_response: b
     if expect_response:
         body["id"] = _next_mcp_id()
 
-    for attempt in range(3):
+    for attempt in range(MEMCLAW_MAX_ATTEMPTS):
         try:
             response = requests.post(url, headers=_mcp_headers(agent_id), json=body, timeout=60)
 
@@ -150,9 +152,9 @@ def _mcp_json_rpc(method: str, params: dict | None = None, *, expect_response: b
                 response.raise_for_status()
 
             if response.status_code >= 500:
-                wait = 5 * (attempt + 1)
-                log.warning("MemClaw MCP %s → %d, retrying in %ds", method, response.status_code, wait)
-                if attempt < 2:
+                if attempt < MEMCLAW_MAX_ATTEMPTS - 1:
+                    wait = backoff_delay(MEMCLAW_BASE_SECONDS, attempt)
+                    log.warning("MemClaw MCP %s → %d, retrying in %.1fs", method, response.status_code, wait)
                     time.sleep(wait)
                     continue
                 response.raise_for_status()
@@ -166,12 +168,14 @@ def _mcp_json_rpc(method: str, params: dict | None = None, *, expect_response: b
             return payload.get("result", payload)
 
         except (Timeout, RequestsConnectionError) as exc:
-            wait = 5 * (attempt + 1)
-            log.warning("MemClaw MCP %s network error: %s — retrying in %ds", method, exc, wait)
-            if attempt < 2:
+            if attempt < MEMCLAW_MAX_ATTEMPTS - 1:
+                wait = backoff_delay(MEMCLAW_BASE_SECONDS, attempt)
+                log.warning("MemClaw MCP %s network error: %s — retrying in %.1fs", method, exc, wait)
                 time.sleep(wait)
                 continue
-            raise RequestException(f"MemClaw MCP {method} failed after 3 attempts: {exc}") from exc
+            raise RequestException(
+                f"MemClaw MCP {method} failed after {MEMCLAW_MAX_ATTEMPTS} attempts: {exc}"
+            ) from exc
 
     raise RequestException(f"MemClaw MCP {method} exhausted retries")
 
@@ -280,7 +284,7 @@ def _request_with_retry(
     *,
     json_body: dict | None = None,
     params: dict | None = None,
-    max_attempts: int = 3,
+    max_attempts: int = MEMCLAW_MAX_ATTEMPTS,
 ) -> dict:
     """
     Make an HTTP request to the MemClaw API with exponential backoff retry.
@@ -315,10 +319,10 @@ def _request_with_retry(
 
             # 5xx → transient, retry with backoff
             if r.status_code >= 500:
-                wait = 5 * (attempt + 1)
-                log.warning("MemClaw %s %s → %d, retrying in %ds (attempt %d/%d)",
-                            method, path, r.status_code, wait, attempt + 1, max_attempts)
                 if attempt < max_attempts - 1:
+                    wait = backoff_delay(MEMCLAW_BASE_SECONDS, attempt)
+                    log.warning("MemClaw %s %s → %d, retrying in %.1fs (attempt %d/%d)",
+                                method, path, r.status_code, wait, attempt + 1, max_attempts)
                     time.sleep(wait)
                     continue
                 r.raise_for_status()
@@ -331,10 +335,10 @@ def _request_with_retry(
             return r.json()
 
         except (Timeout, RequestsConnectionError) as exc:
-            wait = 5 * (attempt + 1)
-            log.warning("MemClaw %s %s network error: %s — retrying in %ds (%d/%d)",
-                        method, path, exc, wait, attempt + 1, max_attempts)
             if attempt < max_attempts - 1:
+                wait = backoff_delay(MEMCLAW_BASE_SECONDS, attempt)
+                log.warning("MemClaw %s %s network error: %s — retrying in %.1fs (%d/%d)",
+                            method, path, exc, wait, attempt + 1, max_attempts)
                 time.sleep(wait)
             else:
                 raise RequestException(f"MemClaw {method} {path} failed after {max_attempts} attempts: {exc}") from exc
