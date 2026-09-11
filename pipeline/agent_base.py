@@ -197,10 +197,14 @@ def run_agent(
             try:
                 result = mcp.call_tool(tool_name, tool_input, agent_id=agent_id)
                 status = "ok"
-            except (ValueError, Exception) as exc:
+            except ValueError as exc:
                 result = {"error": str(exc)}
                 status = "error"
-                log.error("[%s] Tool %s failed: %s", agent_id, tool_name, exc)
+                log.error("[%s] Tool %s failed — unknown tool (check allowlist): %s", agent_id, tool_name, exc)
+            except Exception as exc:
+                result = {"error": str(exc)}
+                status = "error"
+                log.error("[%s] Tool %s failed — transport error: %s", agent_id, tool_name, exc)
 
             tool_call_log.append({
                 "tool":   tool_name,
