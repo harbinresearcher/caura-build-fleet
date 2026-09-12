@@ -91,8 +91,9 @@ def run_agent(
         agent_id:       MemClaw agent identifier (injected into every MCP call)
         system:         System prompt describing this agent's role
         user_prompt:    The task prompt for this turn
-        allowed_tools:  If set, only expose these tool names to the model.
-                        Pass [] for no tools. Pass None for all tools.
+        allowed_tools:  If set, only expose these tool names to the model and
+                        reject any call to a tool outside the set. Pass [] to
+                        expose no tools. Pass None to allow every listed tool.
         max_iterations: Safety cap on tool-use rounds
 
     Returns:
@@ -104,11 +105,15 @@ def run_agent(
         }
     """
     all_tools = mcp.list_tools(agent_id=agent_id)
+    # allowed_names is the authoritative permitted set. With no allowlist the model
+    # may use any tool the client can dispatch; otherwise both the exposed schemas
+    # and every dispatched call are limited to the same set.
     if allowed_tools is None:
         tools = all_tools
+        allowed_names = {t["name"] for t in all_tools}
     else:
-        allowed_set = set(allowed_tools)
-        tools = [t for t in all_tools if t["name"] in allowed_set]
+        allowed_names = set(allowed_tools)
+        tools = [t for t in all_tools if t["name"] in allowed_names]
 
     openai_tools = _to_openai_tools(tools)
 
@@ -195,6 +200,28 @@ def run_agent(
                     "input":  None,
                     "result": {"error": f"Malformed arguments: {exc}"},
                     "status": "parse_error",
+                })
+                continue
+
+            # Enforce the allowlist before dispatch, not only when choosing which
+            # schemas to expose. The model can still name a tool it was never
+            # offered (hallucinated call, or instructions injected through recalled
+            # memory), and mcp.call_tool dispatches by name alone.
+            if tool_name not in allowed_names:
+                log.error("[%s] Tool %s rejected — not in allowlist %s",
+                          agent_id, tool_name, sorted(allowed_names))
+                messages.append({
+                    "role":         "tool",
+                    "tool_call_id": tc.id,
+                    "content":      json.dumps({
+                        "error": f"Tool {tool_name!r} is not available to agent {agent_id!r}"
+                    }),
+                })
+                tool_call_log.append({
+                    "tool":   tool_name,
+                    "input":  tool_input,
+                    "result": {"error": f"Tool {tool_name!r} is not available to agent {agent_id!r}"},
+                    "status": "denied",
                 })
                 continue
 

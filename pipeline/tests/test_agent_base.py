@@ -108,6 +108,104 @@ def test_run_agent_one_tool_call(mock_tools, mock_call_tool, mock_llm):
     assert result["tool_calls"][0]["status"] == "ok"
 
 
+# ── run_agent — the allowlist is enforced at call time, not only when exposed ──
+
+@patch("agent_base._llm")
+@patch("mcp_client.call_tool", return_value={"written": 1})
+@patch("mcp_client.list_tools")
+def test_run_agent_rejects_tool_outside_allowlist(mock_tools, mock_call_tool, mock_llm):
+    """A read-only agent must not be able to write via a tool it never received."""
+    mock_tools.return_value = [
+        {"name": "memclaw_recall", "description": "Recall", "input_schema": {}},
+        {"name": "memclaw_write", "description": "Write", "input_schema": {}},
+    ]
+
+    tc = MagicMock()
+    tc.id = "call-sneaky"
+    tc.function.name = "memclaw_write"
+    tc.function.arguments = json.dumps({"content": "should never be written"})
+
+    mock_llm.return_value.chat.completions.create.side_effect = [
+        _make_response(_make_choice(tool_calls=[tc], finish_reason="tool_calls")),
+        _make_response(_make_choice(content="Stopped.", finish_reason="stop")),
+    ]
+
+    result = agent_base.run_agent(
+        agent_id="manager-tenant",
+        system="Read-only audit.",
+        user_prompt="Audit the fleet.",
+        allowed_tools=["memclaw_recall"],
+    )
+
+    assert not mock_call_tool.called, "disallowed tool reached mcp.call_tool"
+    assert len(result["tool_calls"]) == 1
+    entry = result["tool_calls"][0]
+    assert entry["tool"] == "memclaw_write"
+    assert entry["status"] == "denied"
+    assert "not available" in entry["result"]["error"]
+
+
+@patch("agent_base._llm")
+@patch("mcp_client.call_tool", return_value={"items": []})
+@patch("mcp_client.list_tools")
+def test_run_agent_allows_tool_inside_allowlist(mock_tools, mock_call_tool, mock_llm):
+    """The enforcement must not block tools the agent legitimately holds."""
+    mock_tools.return_value = [
+        {"name": "memclaw_recall", "description": "Recall", "input_schema": {}},
+        {"name": "memclaw_write", "description": "Write", "input_schema": {}},
+    ]
+
+    tc = MagicMock()
+    tc.id = "call-ok"
+    tc.function.name = "memclaw_recall"
+    tc.function.arguments = json.dumps({"query": "layout"})
+
+    mock_llm.return_value.chat.completions.create.side_effect = [
+        _make_response(_make_choice(tool_calls=[tc], finish_reason="tool_calls")),
+        _make_response(_make_choice(content="Done.", finish_reason="stop")),
+    ]
+
+    result = agent_base.run_agent(
+        agent_id="manager-tenant",
+        system="Read-only audit.",
+        user_prompt="Audit the fleet.",
+        allowed_tools=["memclaw_recall"],
+    )
+
+    assert mock_call_tool.called
+    assert mock_call_tool.call_args[0][0] == "memclaw_recall"
+    assert result["tool_calls"][0]["status"] == "ok"
+
+
+@patch("agent_base._llm")
+@patch("mcp_client.call_tool", return_value={"written": 1})
+@patch("mcp_client.list_tools")
+def test_run_agent_without_allowlist_dispatches_any_listed_tool(mock_tools, mock_call_tool, mock_llm):
+    """allowed_tools=None keeps the previous behaviour: every listed tool is callable."""
+    mock_tools.return_value = [
+        {"name": "memclaw_write", "description": "Write", "input_schema": {}},
+    ]
+
+    tc = MagicMock()
+    tc.id = "call-1"
+    tc.function.name = "memclaw_write"
+    tc.function.arguments = json.dumps({"content": "ok"})
+
+    mock_llm.return_value.chat.completions.create.side_effect = [
+        _make_response(_make_choice(tool_calls=[tc], finish_reason="tool_calls")),
+        _make_response(_make_choice(content="Done.", finish_reason="stop")),
+    ]
+
+    result = agent_base.run_agent(
+        agent_id="frontend-agent",
+        system="Write memories.",
+        user_prompt="Decide.",
+    )
+
+    assert mock_call_tool.called
+    assert result["tool_calls"][0]["status"] == "ok"
+
+
 # ── run_agent — malformed tool JSON is handled gracefully ────────────────────
 
 @patch("agent_base._llm")
