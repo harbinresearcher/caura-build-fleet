@@ -129,6 +129,15 @@ def test_write_empty_content_raises():
         mcp._write({"agent_id": "a", "content": "", "type": "fact", "importance": 0.5})
 
 
+def test_call_tool_rest_rejects_empty_content(monkeypatch):
+    monkeypatch.setenv("MEMCLAW_TRANSPORT", "rest")
+    with pytest.raises(ValueError, match="must not be empty"):
+        mcp.call_tool(
+            "memclaw_write",
+            {"agent_id": "a", "content": "", "type": "fact", "importance": 0.5},
+        )
+
+
 # ── _recall ───────────────────────────────────────────────────────────────────
 
 @patch("mcp_client.requests.post")
@@ -210,6 +219,60 @@ def test_call_tool_injects_agent_id(mock_recall):
     mcp.call_tool("memclaw_recall", {"query": "test"}, agent_id="my-agent")
     args = mock_recall.call_args[0][0]
     assert args["agent_id"] == "my-agent"
+
+
+# ── memclaw_write validation happens before transport dispatch (#29) ──────────
+
+@patch("mcp_client._mcp_call_tool")
+def test_call_tool_mcp_rejects_oversized_single_memory(mock_call, monkeypatch):
+    from config import MAX_MEMORY_CONTENT_LEN
+
+    _reset_mcp_state()
+    monkeypatch.setenv("MEMCLAW_TRANSPORT", "mcp")
+    with pytest.raises(ValueError, match="too long"):
+        mcp.call_tool(
+            "memclaw_write",
+            {"content": "x" * (MAX_MEMORY_CONTENT_LEN + 1)},
+            agent_id="agent-1",
+        )
+    mock_call.assert_not_called()
+
+
+@patch("mcp_client._mcp_call_tool")
+def test_call_tool_mcp_rejects_invalid_batch_before_dispatch(mock_call, monkeypatch):
+    _reset_mcp_state()
+    monkeypatch.setenv("MEMCLAW_TRANSPORT", "mcp")
+    with pytest.raises(ValueError, match="must not be empty"):
+        mcp.call_tool(
+            "memclaw_write",
+            {
+                "memories": [
+                    {"content": "valid memory", "type": "fact", "importance": 0.8},
+                    {"content": "   ", "type": "rule", "importance": 0.9},
+                ]
+            },
+            agent_id="agent-1",
+        )
+    mock_call.assert_not_called()
+
+
+@patch("mcp_client._mcp_call_tool")
+def test_call_tool_mcp_forwards_valid_batch(mock_call, monkeypatch):
+    _reset_mcp_state()
+    monkeypatch.setenv("MEMCLAW_TRANSPORT", "mcp")
+    mock_call.return_value = {"written": 1}
+    memories = [{"content": "valid memory", "type": "fact", "importance": 0.8}]
+
+    result = mcp.call_tool(
+        "memclaw_write",
+        {"memories": memories},
+        agent_id="agent-1",
+    )
+
+    assert result == {"written": 1}
+    forwarded = mock_call.call_args.args[1]
+    assert forwarded["memories"] == memories
+    assert forwarded["agent_id"] == "agent-1"
 
 
 @patch("mcp_client.requests.post")

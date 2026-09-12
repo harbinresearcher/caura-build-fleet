@@ -383,6 +383,17 @@ def call_tool(tool_name: str, arguments: dict, agent_id: str | None = None) -> A
         except (TypeError, ValueError):
             args["top_k"] = MAX_RECALL_TOP_K
 
+    # Reject invalid write content before either transport is selected. The REST path
+    # also validates inside _write(), but the MCP path returns above that call, so
+    # validating here applies one policy to both transports and stops an invalid item
+    # from being sent after valid ones. Mirrors _write()'s flat and batch shapes.
+    if tool_name == "memclaw_write":
+        memories = args.get("memories")
+        if not memories:
+            memories = [args]
+        for mem in memories:
+            _validate_memory_content(mem.get("content", ""))
+
     if _transport() == "mcp":
         # Strip tenant_id — the server derives it from the API key.
         # Force fleet_id from env: the model may send fleet_id="" which blocks
