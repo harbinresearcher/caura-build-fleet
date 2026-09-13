@@ -308,11 +308,26 @@ def print_summary(results: dict):
 
 
 def reset_fleet_memories() -> None:
-    """Delete all memories in the current fleet after a run."""
+    """Delete all memories in the current fleet after a run.
+
+    Teardown runs under the ORCHESTRATOR identity, not the Manager. The Manager is
+    the agent this repo advertises as read-only, and its allowlist omits
+    memclaw_manage entirely; attributing a fleet-wide delete to it contradicts both
+    that claim and the audit trail it exists to produce. The orchestrator is also
+    what performs the pre-flight bootstrap writes, so it already owns lifecycle
+    work outside the agent chain.
+
+    The orchestrator identity needs trust_level >= 2 for memclaw_list, exactly like
+    the Manager — see the README "Elevate agent trust" step for its curl command.
+    """
     fleet_id = os.environ.get("MEMCLAW_FLEET_ID", "fleet")
     log.info("Resetting fleet memories for fleet_id=%r …", fleet_id)
+    # Register the identity before using it. The Manager bootstrap in run_pipeline()
+    # only fires when the Manager is part of the run, and --reset can be used with
+    # --skip-manager, so the teardown path must not depend on it.
+    _bootstrap_agent(AgentID.ORCHESTRATOR, "Orchestrator")
     try:
-        result = mcp.call_tool("memclaw_list", {"fleet_id": fleet_id}, agent_id=AgentID.MANAGER)
+        result = mcp.call_tool("memclaw_list", {"fleet_id": fleet_id}, agent_id=AgentID.ORCHESTRATOR)
         memories = result.get("items") or result.get("memories") or result.get("results") or []
         if not memories:
             log.info("No memories found to delete.")
@@ -324,7 +339,7 @@ def reset_fleet_memories() -> None:
             if not mid:
                 continue
             try:
-                mcp.call_tool("memclaw_manage", {"op": "delete", "memory_id": mid}, agent_id=AgentID.MANAGER)
+                mcp.call_tool("memclaw_manage", {"op": "delete", "memory_id": mid}, agent_id=AgentID.ORCHESTRATOR)
                 deleted += 1
             except Exception as exc:
                 log.warning("Failed to delete memory %s: %s", mid, exc)
