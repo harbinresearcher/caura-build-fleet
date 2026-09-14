@@ -602,7 +602,14 @@ cd memclaw-build-fleet
 python -m venv .venv && source .venv/bin/activate  # or .venv\Scripts\Activate.ps1 on Windows
 pip install -r pipeline/requirements.txt
 ```
+### Running tests
 
+Run the test suite locally with:
+
+```bash
+cd pipeline
+pytest tests/ -v
+```
 Always run `--dry-run` first after making changes:
 
 ```bash
