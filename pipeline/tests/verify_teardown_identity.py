@@ -54,11 +54,42 @@ class _Recorder:
 
 
 def teardown_with(recorder):
-    """Run reset_fleet_memories with mcp.call_tool and the bootstrap stubbed."""
-    with patch("mcp_client.call_tool", side_effect=recorder), \
-         patch.object(run_pipeline, "_bootstrap_agent") as bootstrap:
+    """Run reset_fleet_memories with mcp.call_tool stubbed.
+
+    Registration is no longer part of teardown (it moved to run_pipeline's
+    pre-flight), so this records mcp calls only.
+    """
+    with patch("mcp_client.call_tool", side_effect=recorder):
         run_pipeline.reset_fleet_memories()
+    return recorder
+
+
+def pipeline_with_bootstrap(modules):
+    """Run run_pipeline() over fake steps, returning the bootstrap mock.
+
+    Steps are (name, module, _) triples; each fake module only needs a `run()`
+    returning a tool_calls list, so the pipeline body is exercised without any
+    network work.
+    """
+    steps = [(f"step-{i}", m, None) for i, m in enumerate(modules)]
+    with patch.object(run_pipeline, "_bootstrap_agent") as bootstrap:
+        run_pipeline.run_pipeline(steps)
     return bootstrap
+
+
+class _FakeAgent:
+    """Minimal stand-in for an agent module inside run_pipeline()."""
+
+    def __init__(self) -> None:
+        self.tool_calls: list[dict] = []
+
+    def run(self) -> dict:
+        return {
+            "agent_id": "fake",
+            "final_text": "",
+            "tool_calls": self.tool_calls,
+            "iterations": 1,
+        }
 
 
 # ── checks ────────────────────────────────────────────────────────────────────
@@ -95,13 +126,30 @@ def check_list_and_delete_use_the_same_identity():
     assert rec.identities == {config.AgentID.ORCHESTRATOR}, rec.identities
 
 
-def check_orchestrator_is_registered_before_use():
-    """--reset can be combined with --skip-manager, so teardown cannot depend on
-    the Manager bootstrap inside run_pipeline() having run."""
-    bootstrap = teardown_with(_Recorder({"items": [{"id": "mem-1"}]}))
-    bootstrap.assert_called_once()
-    args, _ = bootstrap.call_args
-    assert args[0] == config.AgentID.ORCHESTRATOR, args
+def check_orchestrator_is_registered_by_the_run_path():
+    """Registration belongs to run_pipeline's pre-flight, not to teardown.
+
+    It runs before the pipeline rather than inside teardown, so --skip-manager is
+    still satisfied (the orchestrator bootstrap is unconditional, unlike the
+    Manager's) and teardown never writes into the fleet it is emptying.
+    """
+    bootstrap = pipeline_with_bootstrap([_FakeAgent()])
+    registered = [c.args[0] for c in bootstrap.call_args_list]
+    assert config.AgentID.ORCHESTRATOR in registered, registered
+
+
+def check_orchestrator_registration_is_unconditional():
+    """It must not be gated on which agents are in the run."""
+    bootstrap = pipeline_with_bootstrap([])  # no steps at all
+    registered = [c.args[0] for c in bootstrap.call_args_list]
+    assert registered == [config.AgentID.ORCHESTRATOR], registered
+
+
+def check_teardown_performs_no_registration():
+    """The bug this guards: teardown registering by writing into the fleet."""
+    with patch.object(run_pipeline, "_bootstrap_agent") as bootstrap:
+        teardown_with(_Recorder({"items": [{"id": "mem-1"}]}))
+    bootstrap.assert_not_called()
 
 
 def check_no_memories_still_uses_orchestrator():
@@ -158,7 +206,9 @@ CHECKS = [
     check_orchestrator_is_not_a_pipeline_agent,
     check_teardown_deletes_as_orchestrator_not_manager,
     check_list_and_delete_use_the_same_identity,
-    check_orchestrator_is_registered_before_use,
+    check_orchestrator_is_registered_by_the_run_path,
+    check_orchestrator_registration_is_unconditional,
+    check_teardown_performs_no_registration,
     check_no_memories_still_uses_orchestrator,
     check_alternate_list_result_keys,
     check_entries_without_an_id_are_skipped,

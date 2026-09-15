@@ -155,6 +155,12 @@ def run_pipeline(steps) -> dict:
         _bootstrap_agent(AgentID.MANAGER, "Manager Tenant")
     if agent_codereview in module_set:
         _bootstrap_agent(AgentID.CODE_REVIEW, "Code Review Agent")
+    # The orchestrator owns fleet teardown, so register it here rather than inside
+    # reset_fleet_memories(). Registration writes two seed memories, and teardown
+    # cannot write into the fleet it is about to empty: the seeds would either be
+    # counted as deletions or, if the write has not propagated when the list runs,
+    # outlive the reset and leak into the next --loop iteration.
+    _bootstrap_agent(AgentID.ORCHESTRATOR, "Orchestrator")
 
     results = {}
     for i, (name, module, _) in enumerate(steps, 1):
@@ -313,19 +319,17 @@ def reset_fleet_memories() -> None:
     Teardown runs under the ORCHESTRATOR identity, not the Manager. The Manager is
     the agent this repo advertises as read-only, and its allowlist omits
     memclaw_manage entirely; attributing a fleet-wide delete to it contradicts both
-    that claim and the audit trail it exists to produce. The orchestrator is also
-    what performs the pre-flight bootstrap writes, so it already owns lifecycle
-    work outside the agent chain.
+    that claim and the audit trail it exists to produce.
+
+    The orchestrator identity is registered in run_pipeline()'s pre-flight, not
+    here: registration performs bootstrap writes, and teardown must not write into
+    the fleet it is emptying.
 
     The orchestrator identity needs trust_level >= 2 for memclaw_list, exactly like
     the Manager — see the README "Elevate agent trust" step for its curl command.
     """
     fleet_id = os.environ.get("MEMCLAW_FLEET_ID", "fleet")
     log.info("Resetting fleet memories for fleet_id=%r …", fleet_id)
-    # Register the identity before using it. The Manager bootstrap in run_pipeline()
-    # only fires when the Manager is part of the run, and --reset can be used with
-    # --skip-manager, so the teardown path must not depend on it.
-    _bootstrap_agent(AgentID.ORCHESTRATOR, "Orchestrator")
     try:
         result = mcp.call_tool("memclaw_list", {"fleet_id": fleet_id}, agent_id=AgentID.ORCHESTRATOR)
         memories = result.get("items") or result.get("memories") or result.get("results") or []
