@@ -87,7 +87,15 @@ def run() -> dict:
         user_prompt=PROMPT,
         allowed_tools=READ_ONLY_TOOLS,
     )
-    writes = [c for c in result["tool_calls"] if "write" in c["tool"] or "manage" in c["tool"]]
+    # A call refused by the allowlist is logged so the attempt stays visible, but it
+    # must not count as a write: "attempted, blocked, nothing written" and "wrote to
+    # the store" are opposite outcomes, and a denied entry carries the real tool name.
+    writes = [
+        c
+        for c in result["tool_calls"]
+        if c["tool"] and c.get("status") != "denied"
+        and ("write" in c["tool"] or "manage" in c["tool"])
+    ]
     if writes:
         log.warning("[Manager Tenant] %d unexpected write call(s) detected!", len(writes))
     else:

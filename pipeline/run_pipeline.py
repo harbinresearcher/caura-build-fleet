@@ -272,7 +272,15 @@ def print_summary(results: dict):
         print(f"  Pipeline Health      :  {h_icon}  {health}")
 
         mgr_calls = mgr["data"].get("tool_calls", [])
-        write_calls = [c for c in mgr_calls if c.get("tool") and ("write" in c["tool"] or "manage" in c["tool"])]
+        # Denied entries keep the tool's real name but describe an attempt the
+        # allowlist blocked, so they cannot count toward VIOLATED. The attempt
+        # stays in the log and in the tool-usage summary.
+        write_calls = [
+            c
+            for c in mgr_calls
+            if c.get("tool") and c.get("status") != "denied"
+            and ("write" in c["tool"] or "manage" in c["tool"])
+        ]
         def _is_successful_read(c: dict) -> bool:
             if c.get("tool") not in {"memclaw_list", "memclaw_stats", "memclaw_recall", "memclaw_entity_get", "memclaw_keystones"}:
                 return False
