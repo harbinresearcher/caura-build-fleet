@@ -31,10 +31,16 @@ import argparse
 from datetime import datetime
 from pathlib import Path
 
-# Fix Windows console encoding so UTF-8 chars print correctly
+# Fix Windows console encoding so UTF-8 chars print correctly.
+# Reconfigure the existing stream in place rather than swapping sys.stdout for a new
+# TextIOWrapper: replacing the object leaves whoever captured it (pytest, a parent
+# process, a notebook) holding a stream that is no longer the live one, which breaks
+# pytest's capture teardown on Windows with "ValueError: I/O operation on closed file".
 if sys.platform == "win32":
-    import io
-    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, ValueError):  # pragma: no cover - non-reconfigurable stream
+        pass
 
 # Load .env BEFORE any module that reads env vars at import time
 try:
@@ -313,7 +319,7 @@ def print_summary(results: dict):
     print("═" * 65 + "\n")
 
 
-def reset_fleet_memories() -> None:
+def reset_fleet_memories() -> bool:
     """Delete all memories in the current fleet after a run.
 
     Teardown runs under the ORCHESTRATOR identity, not the Manager. The Manager is
@@ -327,6 +333,10 @@ def reset_fleet_memories() -> None:
 
     The orchestrator identity needs trust_level >= 2 for memclaw_list, exactly like
     the Manager — see the README "Elevate agent trust" step for its curl command.
+
+    :returns: `True` if the fleet is empty once this returns, `False` if it may still
+        hold memories — because listing them failed, or because at least one delete
+        failed. A fleet that already held no memories counts as success.
     """
     fleet_id = os.environ.get("MEMCLAW_FLEET_ID", "fleet")
     log.info("Resetting fleet memories for fleet_id=%r …", fleet_id)
@@ -335,7 +345,7 @@ def reset_fleet_memories() -> None:
         memories = result.get("items") or result.get("memories") or result.get("results") or []
         if not memories:
             log.info("No memories found to delete.")
-            return
+            return True
         deleted = 0
         failed = 0
         for mem in memories:
@@ -350,9 +360,11 @@ def reset_fleet_memories() -> None:
                 failed += 1
         log.info("Fleet reset complete — deleted %d, failed %d.", deleted, failed)
         print(f"\n  Fleet Reset         : {deleted} memories deleted, {failed} failed.")
+        return failed == 0
     except Exception as exc:
         log.error("Fleet reset failed: %s", exc)
         print(f"\n  Fleet Reset         : ⚠️  FAILED — {exc}")
+        return False
 
 
 def exit_code(results: dict) -> int:
@@ -443,7 +455,11 @@ def main():
         print_summary(results)
 
         if args.reset or args.loop:
-            reset_fleet_memories()
+            if not reset_fleet_memories():
+                pipeline_exit_code = max(pipeline_exit_code, 1)
+                if args.loop:
+                    print("\n  Fleet reset failed — stopping the loop so later iterations aren't polluted.")
+                    break
 
         if args.json_output:
             safe = json.loads(json.dumps(results, default=str))
